@@ -1,75 +1,50 @@
 from pathlib import Path
-import kagglehub
 import pandas as pd
-import numpy as np
-import re
-import string
-import argparse
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import classification_report, accuracy_score
+import joblib
 
-RAW_DIR = Path("data/raw")
 PROCESSED_DIR = Path("data")
-RAW_DIR.mkdir(parents=True, exist_ok=True)
-PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-
-def download_dataset() -> Path:
-
-    dataset_path = kagglehub.dataset_download("saurabhshahane/fake-news-classification")
-    csv_candidates = list(Path(dataset_path).rglob("*.csv"))
-    if not csv_candidates:
-        raise FileNotFoundError("No CSV file found in downloaded dataset.")
-    raw_csv = csv_candidates[0]
-    target_path = RAW_DIR / raw_csv.name
-    if not target_path.exists():
-        target_path.write_bytes(raw_csv.read_bytes())
-    return target_path
-
-def clean_text(text: str) -> str:
-    """Basic text normalisation: lower‑casing, stripping HTML, numbers, punctuation
-    and extra whitespace."""
-    if pd.isna(text):
-        return ""
-    text = str(text).lower()  #małe litery
-    text = re.sub(r'<.*?>', ' ', text)  #usuwanie HTML
-    text = re.sub(r'http\S+|www\.\S+', ' ', text)  #usuwanie URL
-    text = re.sub(r'[^a-z\s]', ' ', text)  #cyfry + interpunkcja
-    text = re.sub(r'\s{2,}', ' ', text)  #nadmiar spacji
-    return text.strip()  #obciecie spacji na końcach
 
 
-def preprocess(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [c.strip().lower() for c in df.columns]
-    df["title"] = df["title"].astype(str).apply(clean_text)
-    df["text"] = df["text"].astype(str).apply(clean_text)
-    df["content"] = (df["title"] + " " + df["text"]).str.strip()
-    df.dropna(subset=["label"], inplace=True)
-    df.drop_duplicates(subset=["content"], inplace=True)
-    return df[["content", "label"]]
+def load_processed_data() -> pd.DataFrame:
+    path = PROCESSED_DIR / "processed_welfake.csv"
+    return pd.read_csv(path)
 
-def perform_eda(df: pd.DataFrame) -> None:
-    print("======== WELFake EDA ========")
-    print(f"Shape: {df.shape}")
-    print("\nLabel distribution (0=fake, 1=real):")
-    print(df["label"].value_counts())
-    print("\nMissing values per column:")
-    print(df.isna().sum())
-    print("\nAverage words per news item:", df["content"].str.split().apply(len).mean().round(2))
-    print("=============================")
 
-def save_processed(df: pd.DataFrame, path: Path):
-    df.to_csv(path, index=False)
-    print(f"Processed dataset saved to {path.resolve()}")
+def main():
+    data = load_processed_data()
 
-def main(args=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--save_path", type=Path, default=PROCESSED_DIR / "processed_welfake.csv",
-                        help="Where to store cleaned dataset")
-    parsed = parser.parse_args(args=args)
-    raw_csv = download_dataset()
-    raw_df = pd.read_csv(raw_csv)
-    processed_df = preprocess(raw_df)
-    perform_eda(processed_df)
-    save_processed(processed_df, parsed.save_path)
+    X = data["content"]
+    y = data["label"]
+
+    _, X_subset, _, y_subset = train_test_split(X, y, test_size=0.1, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X_subset, y_subset, test_size=0.3, random_state=42)
+    vectorizer = TfidfVectorizer(max_features=5000, stop_words="english")
+    X_train_vec = vectorizer.fit_transform(X_train)
+    X_test_vec = vectorizer.transform(X_test)
+
+    param_grid = {
+        "C": [0.01, 0.1, 1, 10, 100],
+        "penalty": ["l1", "l2"],
+        "solver": ["liblinear"]
+    }
+
+    grid_search = GridSearchCV(LogisticRegression(), param_grid, cv=5, scoring="accuracy", verbose=1)
+    grid_search.fit(X_train_vec, y_train)
+
+    print("Najlepsze parametry:", grid_search.best_params_)
+
+    best_model = LogisticRegression(**grid_search.best_params_)
+    best_model.fit(X_train_vec, y_train)
+    y_pred = best_model.predict(X_test_vec)
+    print("Dokładność:", accuracy_score(y_test, y_pred))
+    print("Raport klasyfikacji:\n", classification_report(y_test, y_pred))
+    joblib.dump(best_model, PROCESSED_DIR / "logistic_regression_model.pkl")
+    joblib.dump(vectorizer, PROCESSED_DIR / "tfidf_vectorizer.pkl")
+
 
 if __name__ == "__main__":
     main()
