@@ -33,27 +33,47 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\s{2,}', ' ', text)  #nadmiar spacji
     return text.strip()  #obciecie spacji na końcach
 
-
 def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.strip().lower() for c in df.columns]
     df["title"] = df["title"].astype(str).apply(clean_text)
     df["text"] = df["text"].astype(str).apply(clean_text)
     df["content"] = (df["title"] + " " + df["text"]).str.strip()
+
+    # Usuń brakujące etykiety
     df.dropna(subset=["label"], inplace=True)
+
+    # Usuń puste teksty
+    df = df[df["content"].str.strip().astype(bool)]
+
+    # Usuń duplikaty
     df.drop_duplicates(subset=["content"], inplace=True)
+
     return df[["content", "label"]]
 
+
 def perform_eda(df: pd.DataFrame) -> None:
-    print("======== WELFake EDA ========")
-    print(f"Shape: {df.shape}")
-    print("\nLabel distribution (0=fake, 1=real):")
-    print(df["label"].value_counts())
-    print("\nMissing values per column:")
-    print(df.isna().sum())
-    print("\nAverage words per news item:",
-          df["content"].dropna().str.split().apply(len).mean().round(2))
-    print("=============================")
+    print("\nEksploracyjna Analiza Danych (EDA)")
+    print(
+        "Zbiór danych to zbiór wiadomości zawierający artykuły oznaczone jako prawdziwe (1) lub fałszywe (0).\n"
+    )
+    print(f"\nLiczba wierszy : {df.shape[0]}")
+    print(f"Liczba kolumn : {df.shape[1]}")
+
+    print("\nRozkład klas:")
+    label_counts = df["label"].value_counts()
+    print(f"- Fałszywe wiadomości (label = 0): {label_counts.get(0, 0)}")
+    print(f"- Prawdziwe wiadomości (label = 1): {label_counts.get(1, 0)}")
+
+    print("\nLiczba brakujących wartości  w każdej kolumnie:")
+    missing = df.isna().sum()
+    for col, count in missing.items():
+        print(f"- {col}: {count}")
+
+    avg_words = df["content"].dropna().str.split().apply(len).mean().round(2)
+    print(f"\nŚrednia liczba słów w jednym artykule: {avg_words}")
+
+    print("\n")
 
 
 def save_processed(df: pd.DataFrame, path: Path):
